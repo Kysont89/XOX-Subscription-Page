@@ -16,6 +16,8 @@ export interface Package {
   pointMultiplier: string;
   rebate: string;
   featured?: boolean;
+  maintenanceVolume: string;
+  maintenanceUsers?: number;
 }
 
 export interface SubscriptionRecord {

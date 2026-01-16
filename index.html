@@ -8,35 +8,34 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
     :root {
-      --xox-cyan: #00E8FF;
-      --xox-blue: #0066FF;
-      --xox-bg: #000000;
+      --xox-blue: #0b71ff;
+      --xox-bg: #030303;
     }
     body {
-      background-color: #000000;
+      background-color: #030303;
       color: #FFFFFF;
-      font-family: 'Satoshi', sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
       overflow-x: hidden;
-      letter-spacing: -0.02em;
+      letter-spacing: -0.01em;
     }
     .font-mono {
       font-family: 'Roboto Mono', monospace;
     }
     .text-cyan {
-      color: var(--xox-cyan);
+      color: var(--xox-blue);
     }
     .bg-cyan {
-      background-color: var(--xox-cyan);
+      background-color: var(--xox-blue);
     }
     .grid-bg {
-      background-image: 
-        linear-gradient(rgba(0, 232, 255, 0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 232, 255, 0.03) 1px, transparent 1px);
+      background-image:
+        linear-gradient(rgba(11, 113, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(11, 113, 255, 0.03) 1px, transparent 1px);
       background-size: 60px 60px;
     }
     .mesh-gradient {
@@ -46,10 +45,10 @@
       width: 100%;
       height: 100%;
       z-index: -1;
-      background: 
-        radial-gradient(circle at 0% 0%, rgba(0, 102, 255, 0.12) 0%, transparent 50%),
-        radial-gradient(circle at 100% 100%, rgba(0, 232, 255, 0.08) 0%, transparent 50%),
-        #000000;
+      background:
+        radial-gradient(circle at 0% 0%, rgba(11, 113, 255, 0.12) 0%, transparent 50%),
+        radial-gradient(circle at 100% 100%, rgba(11, 113, 255, 0.08) 0%, transparent 50%),
+        #030303;
     }
     .noise {
       position: fixed;
@@ -63,7 +62,7 @@
       background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
     }
     .text-glow-cyan {
-      text-shadow: 0 0 15px rgba(0, 232, 255, 0.6);
+      text-shadow: 0 0 15px rgba(11, 113, 255, 0.6);
     }
     @keyframes float {
       0%, 100% { transform: translateY(0px); }

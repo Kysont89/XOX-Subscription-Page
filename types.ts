@@ -30,6 +30,7 @@ export interface SubscriptionRecord {
   amount: number;
   timestamp: number;
   txHash: string;
+  network?: string; // ETH, BNB, or TRX
 }
 
 export type AppState = 'LANDING' | 'DASHBOARD' | 'SUCCESS' | 'ADMIN';

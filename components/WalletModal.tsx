@@ -1,14 +1,55 @@
 
-import React from 'react';
-import { X } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { NetworkId, NETWORK_LIST, NetworkConfig } from '../config/networks';
 
-interface WalletOption {
-  id: string;
-  name: string;
-  icon: React.ReactNode;
-  description: string;
-}
+// ============================================================================
+// NETWORK ICONS
+// ============================================================================
+const EthIcon = () => (
+  <svg viewBox="0 0 40 40" fill="none" className="w-8 h-8">
+    <circle cx="20" cy="20" r="20" fill="#627EEA"/>
+    <path d="M20 6L19.8 6.68V25.6L20 25.8L28.5 20.9L20 6Z" fill="white" fillOpacity="0.6"/>
+    <path d="M20 6L11.5 20.9L20 25.8V16.54V6Z" fill="white"/>
+    <path d="M20 27.54L19.9 27.66V34.32L20 34.62L28.5 22.66L20 27.54Z" fill="white" fillOpacity="0.6"/>
+    <path d="M20 34.62V27.54L11.5 22.66L20 34.62Z" fill="white"/>
+    <path d="M20 25.8L28.5 20.9L20 16.54V25.8Z" fill="white" fillOpacity="0.2"/>
+    <path d="M11.5 20.9L20 25.8V16.54L11.5 20.9Z" fill="white" fillOpacity="0.6"/>
+  </svg>
+);
 
+const BnbIcon = () => (
+  <svg viewBox="0 0 40 40" fill="none" className="w-8 h-8">
+    <circle cx="20" cy="20" r="20" fill="#F3BA2F"/>
+    <path d="M20 8L14.5 13.5L16.62 15.62L20 12.24L23.38 15.62L25.5 13.5L20 8Z" fill="white"/>
+    <path d="M10 18L12.12 20.12L14.24 18L12.12 15.88L10 18Z" fill="white"/>
+    <path d="M14.5 22.5L20 28L25.5 22.5L23.38 20.38L20 23.76L16.62 20.38L14.5 22.5Z" fill="white"/>
+    <path d="M25.76 18L27.88 20.12L30 18L27.88 15.88L25.76 18Z" fill="white"/>
+    <path d="M22.12 18L20 15.88L17.88 18L20 20.12L22.12 18Z" fill="white"/>
+  </svg>
+);
+
+const TrxIcon = () => (
+  <svg viewBox="0 0 40 40" fill="none" className="w-8 h-8">
+    <circle cx="20" cy="20" r="20" fill="#FF0013"/>
+    <path d="M11 12L29 14L22 32L11 12Z" fill="white"/>
+    <path d="M11 12L29 14L24 18L11 12Z" fill="white" fillOpacity="0.6"/>
+    <path d="M24 18L29 14L22 32L24 18Z" fill="white" fillOpacity="0.3"/>
+  </svg>
+);
+
+const NetworkIcon: React.FC<{ networkId: NetworkId; className?: string }> = ({ networkId, className }) => {
+  switch (networkId) {
+    case 'ETH': return <EthIcon />;
+    case 'BNB': return <BnbIcon />;
+    case 'TRX': return <TrxIcon />;
+    default: return null;
+  }
+};
+
+// ============================================================================
+// WALLET ICONS
+// ============================================================================
 const MetaMaskIcon = () => (
   <svg viewBox="0 0 40 40" fill="none" className="w-7 h-7">
     <path d="M32.9583 5L21.2917 13.6833L23.4583 8.53333L32.9583 5Z" fill="#E2761B" stroke="#E2761B" strokeLinecap="round" strokeLinejoin="round"/>
@@ -43,6 +84,14 @@ const MetaMaskIcon = () => (
   </svg>
 );
 
+const TronLinkIcon = () => (
+  <svg viewBox="0 0 40 40" fill="none" className="w-7 h-7">
+    <rect width="40" height="40" rx="8" fill="#2B2F3B"/>
+    <path d="M10 11L30 13L22 32L10 11Z" fill="#FF0013"/>
+    <path d="M10 11L30 13L24 18L10 11Z" fill="#FF4E5A"/>
+  </svg>
+);
+
 const CoinbaseIcon = () => (
   <svg viewBox="0 0 40 40" fill="none" className="w-7 h-7">
     <circle cx="20" cy="20" r="20" fill="#0052FF"/>
@@ -65,87 +114,200 @@ const WalletConnectIcon = () => (
   </svg>
 );
 
+// ============================================================================
+// WALLET CONFIGURATIONS
+// ============================================================================
+interface WalletOption {
+  id: string;
+  name: string;
+  icon: React.ReactNode;
+  description: string;
+  supportedNetworks: NetworkId[];
+}
+
 const walletOptions: WalletOption[] = [
   {
     id: 'metamask',
     name: 'MetaMask',
     icon: <MetaMaskIcon />,
-    description: 'Connect using MetaMask wallet'
+    description: 'Connect using MetaMask',
+    supportedNetworks: ['ETH', 'BNB']
+  },
+  {
+    id: 'tronlink',
+    name: 'TronLink',
+    icon: <TronLinkIcon />,
+    description: 'Connect using TronLink',
+    supportedNetworks: ['TRX']
   },
   {
     id: 'coinbase',
     name: 'Coinbase Wallet',
     icon: <CoinbaseIcon />,
-    description: 'Connect using Coinbase Wallet'
+    description: 'Connect using Coinbase',
+    supportedNetworks: ['ETH', 'BNB']
   },
   {
     id: 'trustwallet',
     name: 'Trust Wallet',
     icon: <TrustWalletIcon />,
-    description: 'Connect using Trust Wallet'
+    description: 'Connect using Trust Wallet',
+    supportedNetworks: ['ETH', 'BNB']
   },
   {
     id: 'walletconnect',
     name: 'WalletConnect',
     icon: <WalletConnectIcon />,
-    description: 'Scan with WalletConnect'
+    description: 'Scan with WalletConnect',
+    supportedNetworks: ['ETH', 'BNB']
   }
 ];
 
+// ============================================================================
+// WALLET MODAL COMPONENT
+// ============================================================================
 interface WalletModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectWallet: (walletId: string) => void;
+  onSelectWallet: (walletId: string, network: NetworkConfig) => void;
+  selectedNetwork?: NetworkId;
 }
 
-const WalletModal: React.FC<WalletModalProps> = ({ isOpen, onClose, onSelectWallet }) => {
+const WalletModal: React.FC<WalletModalProps> = ({ isOpen, onClose, onSelectWallet, selectedNetwork: initialNetwork }) => {
+  const [step, setStep] = useState<'network' | 'wallet'>('network');
+  const [selectedNetwork, setSelectedNetwork] = useState<NetworkConfig | null>(
+    initialNetwork ? NETWORK_LIST.find(n => n.id === initialNetwork) || null : null
+  );
+
   if (!isOpen) return null;
+
+  const handleNetworkSelect = (network: NetworkConfig) => {
+    setSelectedNetwork(network);
+    setStep('wallet');
+  };
+
+  const handleWalletSelect = (walletId: string) => {
+    if (selectedNetwork) {
+      onSelectWallet(walletId, selectedNetwork);
+      // Reset for next time
+      setStep('network');
+      setSelectedNetwork(null);
+    }
+  };
+
+  const handleBack = () => {
+    setStep('network');
+    setSelectedNetwork(null);
+  };
+
+  const handleClose = () => {
+    setStep('network');
+    setSelectedNetwork(null);
+    onClose();
+  };
+
+  const availableWallets = selectedNetwork
+    ? walletOptions.filter(w => w.supportedNetworks.includes(selectedNetwork.id))
+    : [];
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
       <div className="relative w-full max-w-sm bg-[#111111] border border-white/10 rounded-xl p-6 shadow-2xl">
         {/* Close Button */}
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute top-4 right-4 w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[#929292] hover:text-white hover:border-white/20 transition-all"
         >
           <X size={16} />
         </button>
 
-        {/* Header */}
-        <div className="text-center mb-6">
-          <h3 className="text-xl font-bold text-white mb-2">Connect Wallet</h3>
-          <p className="text-[#929292] text-sm">Choose your preferred wallet</p>
-        </div>
+        {/* Step 1: Network Selection */}
+        {step === 'network' && (
+          <>
+            <div className="text-center mb-6">
+              <h3 className="text-xl font-bold text-white mb-2">Select Network</h3>
+              <p className="text-[#929292] text-sm">Choose your preferred blockchain network</p>
+            </div>
 
-        {/* Wallet Options */}
-        <div className="space-y-3">
-          {walletOptions.map((wallet) => (
+            <div className="space-y-3">
+              {NETWORK_LIST.map((network) => (
+                <button
+                  key={network.id}
+                  onClick={() => handleNetworkSelect(network)}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl bg-[#030303] border border-white/5 hover:border-[#0b71ff]/30 hover:bg-[#0b71ff]/5 transition-all group"
+                >
+                  <div className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden" style={{ backgroundColor: `${network.color}20` }}>
+                    <NetworkIcon networkId={network.id} />
+                  </div>
+                  <div className="text-left flex-1">
+                    <p className="text-sm font-semibold text-white group-hover:text-[#0b71ff] transition-colors">
+                      {network.name}
+                    </p>
+                    <p className="text-xs text-[#929292]">Pay with USDT ({network.shortName})</p>
+                  </div>
+                  <ChevronRight size={18} className="text-[#929292] group-hover:text-[#0b71ff]" />
+                </button>
+              ))}
+            </div>
+
+            <p className="text-center text-xs text-[#929292] mt-6">
+              All payments are made in USDT stablecoin
+            </p>
+          </>
+        )}
+
+        {/* Step 2: Wallet Selection */}
+        {step === 'wallet' && selectedNetwork && (
+          <>
+            {/* Back Button */}
             <button
-              key={wallet.id}
-              onClick={() => onSelectWallet(wallet.id)}
-              className="w-full flex items-center gap-4 p-4 rounded-xl bg-[#030303] border border-white/5 hover:border-[#0b71ff]/30 hover:bg-[#0b71ff]/5 transition-all group"
+              onClick={handleBack}
+              className="absolute top-4 left-4 w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[#929292] hover:text-white hover:border-white/20 transition-all"
             >
-              <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden p-1">
-                {wallet.icon}
-              </div>
-              <div className="text-left">
-                <p className="text-sm font-semibold text-white group-hover:text-[#0b71ff] transition-colors">
-                  {wallet.name}
-                </p>
-                <p className="text-xs text-[#929292]">{wallet.description}</p>
-              </div>
+              <ChevronLeft size={16} />
             </button>
-          ))}
-        </div>
 
-        {/* Footer */}
-        <p className="text-center text-xs text-[#929292] mt-6">
-          By connecting, you agree to our Terms of Service
-        </p>
+            <div className="text-center mb-6">
+              <div className="flex items-center justify-center gap-2 mb-2">
+                <div className="w-6 h-6 rounded-md flex items-center justify-center overflow-hidden" style={{ backgroundColor: `${selectedNetwork.color}20` }}>
+                  <NetworkIcon networkId={selectedNetwork.id} className="w-5 h-5" />
+                </div>
+                <h3 className="text-xl font-bold text-white">Connect Wallet</h3>
+              </div>
+              <p className="text-[#929292] text-sm">
+                Choose a wallet for {selectedNetwork.name}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {availableWallets.map((wallet) => (
+                <button
+                  key={wallet.id}
+                  onClick={() => handleWalletSelect(wallet.id)}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl bg-[#030303] border border-white/5 hover:border-[#0b71ff]/30 hover:bg-[#0b71ff]/5 transition-all group"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden p-1">
+                    {wallet.icon}
+                  </div>
+                  <div className="text-left">
+                    <p className="text-sm font-semibold text-white group-hover:text-[#0b71ff] transition-colors">
+                      {wallet.name}
+                    </p>
+                    <p className="text-xs text-[#929292]">{wallet.description}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <p className="text-center text-xs text-[#929292] mt-6">
+              By connecting, you agree to our Terms of Service
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
 };
 
+export { NetworkIcon };
 export default WalletModal;

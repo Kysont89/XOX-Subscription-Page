@@ -9,9 +9,10 @@ import WalletModal from './components/WalletModal';
 import AdminAuthGate from './components/AdminAuthGate';
 import { PACKAGES } from './constants';
 import { Package, AppState, SubscriptionRecord, VipLevel } from './types';
-import { useSecureWallet } from './hooks/useSecureWallet';
+import { useMultiChainWallet } from './hooks/useMultiChainWallet';
 import { useSecureRecords } from './hooks/useSecureRecords';
 import { sanitizeInput, validateAddress } from './utils/security';
+import { NetworkConfig, getTxExplorerUrl } from './config/networks';
 import {
   ArrowRight,
   Loader2,
@@ -38,8 +39,8 @@ const App: React.FC = () => {
   const [txStep, setTxStep] = useState<0 | 1 | 2>(0);
   const [showWalletModal, setShowWalletModal] = useState(false);
 
-  // Use secure wallet hook
-  const wallet = useSecureWallet();
+  // Use multi-chain wallet hook
+  const wallet = useMultiChainWallet();
 
   // Use secure records hook
   const { records, saveRecord, error: recordsError, integrityValid } = useSecureRecords();
@@ -64,9 +65,9 @@ const App: React.FC = () => {
     setShowWalletModal(true);
   }, []);
 
-  const handleWalletSelect = useCallback(async (walletId: string) => {
+  const handleWalletSelect = useCallback(async (walletId: string, network: NetworkConfig) => {
     setShowWalletModal(false);
-    await wallet.connectWallet(walletId);
+    await wallet.connectWallet(walletId, network);
   }, [wallet]);
 
   const startSubscription = useCallback(async (pkg: Package) => {
@@ -80,7 +81,6 @@ const App: React.FC = () => {
   }, [wallet.address, openWalletModal]);
 
   const handleDetailsSubmit = useCallback((details: { name: string; email: string; phone: string }) => {
-    // Details are already sanitized by the form
     setCurrentUserDetails(details);
     setIsCollectingDetails(false);
     setTxStep(1);
@@ -93,10 +93,10 @@ const App: React.FC = () => {
   }, []);
 
   const handlePayment = useCallback(async () => {
-    if (!subscribingPackage || !wallet.address || !currentUserDetails) return;
+    if (!subscribingPackage || !wallet.address || !currentUserDetails || !wallet.network) return;
 
-    // Validate wallet address
-    if (!validateAddress(wallet.address)) {
+    // Validate wallet address (for EVM)
+    if (wallet.network.walletType === 'evm' && !validateAddress(wallet.address)) {
       console.error('Invalid wallet address');
       return;
     }
@@ -112,7 +112,8 @@ const App: React.FC = () => {
         packageName: subscribingPackage.name,
         amount: subscribingPackage.price,
         timestamp: Date.now(),
-        txHash: txHash
+        txHash: txHash,
+        network: wallet.network!.id
       };
 
       const saved = await saveRecord(newRecord);
@@ -123,7 +124,7 @@ const App: React.FC = () => {
         setAppState('SUCCESS');
       }
     }, 1800);
-  }, [subscribingPackage, wallet.address, currentUserDetails, saveRecord]);
+  }, [subscribingPackage, wallet.address, wallet.network, currentUserDetails, saveRecord]);
 
   const handleAdminVerify = useCallback(async () => {
     return await wallet.verifyAdminAccess();
@@ -133,6 +134,7 @@ const App: React.FC = () => {
     <div className="min-h-screen grid-bg relative text-white selection:bg-[#0b71ff] selection:text-black">
       <Header
         address={wallet.address}
+        network={wallet.network}
         onConnect={openWalletModal}
         onSetState={setAppState}
         currentState={appState}
@@ -219,12 +221,15 @@ const App: React.FC = () => {
             {/* Wallet Info Card */}
             <div className="max-w-md mx-auto mb-16">
               <div className="bg-[#111111] border border-white/10 p-6 rounded-xl">
-                {wallet.address ? (
+                {wallet.address && wallet.network ? (
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-xs text-[#929292] uppercase tracking-wider mb-1">Portfolio Balance</p>
                       <p className="text-2xl font-bold text-white">
                         {usdtBalance.toLocaleString()} <span className="text-[#0b71ff]">USDT</span>
+                      </p>
+                      <p className="text-xs mt-1" style={{ color: wallet.network.color }}>
+                        on {wallet.network.name}
                       </p>
                     </div>
                     <div className="text-right">
@@ -257,6 +262,31 @@ const App: React.FC = () => {
                   disabled={currentVip >= pkg.level}
                 />
               ))}
+            </div>
+
+            {/* Supported Networks */}
+            <div className="text-center">
+              <p className="text-xs text-[#929292] mb-4">Supported Networks</p>
+              <div className="flex items-center justify-center gap-6">
+                <div className="flex items-center gap-2 text-[#929292]">
+                  <div className="w-6 h-6 rounded-full bg-[#627EEA]/20 flex items-center justify-center">
+                    <span className="text-xs">ETH</span>
+                  </div>
+                  <span className="text-xs">Ethereum</span>
+                </div>
+                <div className="flex items-center gap-2 text-[#929292]">
+                  <div className="w-6 h-6 rounded-full bg-[#F3BA2F]/20 flex items-center justify-center">
+                    <span className="text-xs">BNB</span>
+                  </div>
+                  <span className="text-xs">BSC</span>
+                </div>
+                <div className="flex items-center gap-2 text-[#929292]">
+                  <div className="w-6 h-6 rounded-full bg-[#FF0013]/20 flex items-center justify-center">
+                    <span className="text-xs">TRX</span>
+                  </div>
+                  <span className="text-xs">Tron</span>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -296,18 +326,20 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {txStep > 0 && subscribingPackage && (
+      {txStep > 0 && subscribingPackage && wallet.network && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md">
           <div className="relative w-full max-w-md bg-[#111111] border border-white/10 rounded-xl p-8 shadow-2xl">
              <div className="text-center mb-8">
                <h3 className="text-xl font-bold text-white mb-2">Processing Transaction</h3>
-               <p className="text-[#929292] text-sm">Please complete the steps below</p>
+               <p className="text-[#929292] text-sm">
+                 Paying with USDT on {wallet.network.name}
+               </p>
              </div>
              <div className="space-y-4">
                 <TxStepItem
                   step={1}
                   title="USDT Approval"
-                  description="Grant permission to interact with USDT"
+                  description={`Grant permission to interact with USDT (${wallet.network.shortName})`}
                   status={txStep === 1 ? 'ACTIVE' : 'COMPLETED'}
                   onAction={handleApproval}
                 />
@@ -378,6 +410,22 @@ const LandingHero: React.FC<{ onViewPackages: () => void; onVisitWebsite: () => 
           Visit Website
           <ExternalLink size={18} />
         </button>
+      </div>
+
+      {/* Supported Networks Badge */}
+      <div className="mt-12 flex items-center gap-3">
+        <span className="text-xs text-[#929292]">Pay with USDT on:</span>
+        <div className="flex items-center gap-2">
+          <div className="px-2 py-1 rounded-md bg-[#627EEA]/10 border border-[#627EEA]/20">
+            <span className="text-xs text-[#627EEA]">ETH</span>
+          </div>
+          <div className="px-2 py-1 rounded-md bg-[#F3BA2F]/10 border border-[#F3BA2F]/20">
+            <span className="text-xs text-[#F3BA2F]">BNB</span>
+          </div>
+          <div className="px-2 py-1 rounded-md bg-[#FF0013]/10 border border-[#FF0013]/20">
+            <span className="text-xs text-[#FF0013]">TRX</span>
+          </div>
+        </div>
       </div>
     </div>
 

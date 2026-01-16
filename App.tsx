@@ -13,6 +13,7 @@ import { useMultiChainWallet } from './hooks/useMultiChainWallet';
 import { useSecureRecords } from './hooks/useSecureRecords';
 import { sanitizeInput, validateAddress } from './utils/security';
 import { NetworkConfig, getTxExplorerUrl } from './config/networks';
+import { processPayment, isWalletConfigured } from './services/payment';
 import {
   ArrowRight,
   Loader2,
@@ -26,7 +27,8 @@ import {
   DollarSign,
   BarChart3,
   Zap,
-  AlertTriangle
+  AlertTriangle,
+  CheckCircle
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -38,6 +40,10 @@ const App: React.FC = () => {
   const [currentUserDetails, setCurrentUserDetails] = useState<{ name: string; email: string; phone: string } | null>(null);
   const [txStep, setTxStep] = useState<0 | 1 | 2>(0);
   const [showWalletModal, setShowWalletModal] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState<string>('');
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [lastTxHash, setLastTxHash] = useState<string | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
 
   // Use multi-chain wallet hook
   const wallet = useMultiChainWallet();
@@ -86,45 +92,78 @@ const App: React.FC = () => {
     setTxStep(1);
   }, []);
 
-  const handleApproval = useCallback(() => {
-    setTimeout(() => {
-      setTxStep(2);
-    }, 1200);
-  }, []);
-
-  const handlePayment = useCallback(async () => {
+  const handleProcessPayment = useCallback(async () => {
     if (!subscribingPackage || !wallet.address || !currentUserDetails || !wallet.network) return;
 
     // Validate wallet address (for EVM)
     if (wallet.network.walletType === 'evm' && !validateAddress(wallet.address)) {
-      console.error('Invalid wallet address');
+      setPaymentError('Invalid wallet address');
       return;
     }
 
-    setTimeout(async () => {
-      const txHash = "0x" + Array.from({length: 64}, () => Math.floor(Math.random() * 16).toString(16)).join("");
-      const newRecord: SubscriptionRecord = {
-        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
-        userAddress: wallet.address!,
-        userName: sanitizeInput(currentUserDetails.name),
-        userEmail: sanitizeInput(currentUserDetails.email),
-        userPhone: sanitizeInput(currentUserDetails.phone),
-        packageName: subscribingPackage.name,
-        amount: subscribingPackage.price,
-        timestamp: Date.now(),
-        txHash: txHash,
-        network: wallet.network!.id
-      };
+    // Check if receiving wallet is configured
+    if (!isWalletConfigured(wallet.network.id)) {
+      setPaymentError(`Payment not available for ${wallet.network.name}. Please contact support.`);
+      return;
+    }
 
-      const saved = await saveRecord(newRecord);
-      if (saved) {
-        setUsdtBalance(prev => prev - subscribingPackage.price);
-        setCurrentVip(subscribingPackage.level);
-        setTxStep(0);
-        setAppState('SUCCESS');
+    setIsProcessingPayment(true);
+    setPaymentError(null);
+    setPaymentStatus('Initiating payment...');
+
+    try {
+      const result = await processPayment(
+        wallet.address,
+        subscribingPackage.price,
+        wallet.network,
+        (status) => setPaymentStatus(status)
+      );
+
+      if (result.success && result.txHash) {
+        setLastTxHash(result.txHash);
+        setPaymentStatus('Payment confirmed!');
+
+        // Save subscription record with real tx hash
+        const newRecord: SubscriptionRecord = {
+          id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
+          userAddress: wallet.address!,
+          userName: sanitizeInput(currentUserDetails.name),
+          userEmail: sanitizeInput(currentUserDetails.email),
+          userPhone: sanitizeInput(currentUserDetails.phone),
+          packageName: subscribingPackage.name,
+          amount: subscribingPackage.price,
+          timestamp: Date.now(),
+          txHash: result.txHash,
+          network: wallet.network!.id
+        };
+
+        const saved = await saveRecord(newRecord);
+        if (saved) {
+          setUsdtBalance(prev => prev - subscribingPackage.price);
+          setCurrentVip(subscribingPackage.level);
+          setTxStep(0);
+          setIsProcessingPayment(false);
+          setAppState('SUCCESS');
+        }
+      } else {
+        setPaymentError(result.error || 'Payment failed');
+        setIsProcessingPayment(false);
       }
-    }, 1800);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Payment failed';
+      setPaymentError(errorMessage);
+      setIsProcessingPayment(false);
+    }
   }, [subscribingPackage, wallet.address, wallet.network, currentUserDetails, saveRecord]);
+
+  const handleCancelPayment = useCallback(() => {
+    setTxStep(0);
+    setSubscribingPackage(null);
+    setCurrentUserDetails(null);
+    setPaymentStatus('');
+    setPaymentError(null);
+    setIsProcessingPayment(false);
+  }, []);
 
   const handleAdminVerify = useCallback(async () => {
     return await wallet.verifyAdminAccess();
@@ -294,7 +333,13 @@ const App: React.FC = () => {
         {appState === 'SUCCESS' && subscribingPackage && (
           <SuccessView
             pkg={subscribingPackage}
-            onReturn={() => setAppState('DASHBOARD')}
+            txHash={lastTxHash}
+            network={wallet.network}
+            onReturn={() => {
+              setAppState('DASHBOARD');
+              setLastTxHash(null);
+              setSubscribingPackage(null);
+            }}
           />
         )}
 
@@ -329,28 +374,94 @@ const App: React.FC = () => {
       {txStep > 0 && subscribingPackage && wallet.network && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/90 backdrop-blur-md">
           <div className="relative w-full max-w-md bg-[#111111] border border-white/10 rounded-xl p-8 shadow-2xl">
-             <div className="text-center mb-8">
-               <h3 className="text-xl font-bold text-white mb-2">Processing Transaction</h3>
-               <p className="text-[#929292] text-sm">
-                 Paying with USDT on {wallet.network.name}
-               </p>
-             </div>
-             <div className="space-y-4">
-                <TxStepItem
-                  step={1}
-                  title="USDT Approval"
-                  description={`Grant permission to interact with USDT (${wallet.network.shortName})`}
-                  status={txStep === 1 ? 'ACTIVE' : 'COMPLETED'}
-                  onAction={handleApproval}
-                />
-                <TxStepItem
-                  step={2}
-                  title="Confirm Purchase"
-                  description="Complete the subscription transaction"
-                  status={txStep === 1 ? 'PENDING' : txStep === 2 ? 'ACTIVE' : 'COMPLETED'}
-                  onAction={handlePayment}
-                />
-             </div>
+            {/* Close button */}
+            {!isProcessingPayment && (
+              <button
+                onClick={handleCancelPayment}
+                className="absolute top-4 right-4 text-[#929292] hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            )}
+
+            <div className="text-center mb-8">
+              <h3 className="text-xl font-bold text-white mb-2">
+                {isProcessingPayment ? 'Processing Payment' : 'Confirm Payment'}
+              </h3>
+              <p className="text-[#929292] text-sm">
+                Paying {subscribingPackage.price.toLocaleString()} USDT on {wallet.network.name}
+              </p>
+            </div>
+
+            {/* Payment Details */}
+            <div className="bg-[#030303] rounded-lg p-4 mb-6 border border-white/5">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-[#929292]">Package</span>
+                <span className="text-sm text-white font-medium">{subscribingPackage.name}</span>
+              </div>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-[#929292]">Network</span>
+                <span className="text-sm font-medium" style={{ color: wallet.network.color }}>
+                  {wallet.network.name}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-[#929292]">Amount</span>
+                <span className="text-sm text-white font-bold">{subscribingPackage.price.toLocaleString()} USDT</span>
+              </div>
+            </div>
+
+            {/* Payment Status */}
+            {isProcessingPayment && (
+              <div className="mb-6">
+                <div className="flex items-center justify-center gap-3 mb-4">
+                  <Loader2 className="animate-spin text-[#0b71ff]" size={24} />
+                  <span className="text-sm text-white">{paymentStatus || 'Processing...'}</span>
+                </div>
+                <div className="w-full bg-[#030303] rounded-full h-2">
+                  <div className="bg-[#0b71ff] h-2 rounded-full animate-pulse" style={{ width: '60%' }}></div>
+                </div>
+              </div>
+            )}
+
+            {/* Error Message */}
+            {paymentError && (
+              <div className="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/20">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-red-400">{paymentError}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            {!isProcessingPayment && (
+              <div className="space-y-3">
+                <button
+                  onClick={handleProcessPayment}
+                  disabled={isProcessingPayment}
+                  className="w-full py-4 bg-[#0b71ff] text-white text-sm font-semibold rounded-lg hover:bg-[#0960d9] transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <Shield size={18} />
+                  Confirm & Pay {subscribingPackage.price.toLocaleString()} USDT
+                </button>
+                <button
+                  onClick={handleCancelPayment}
+                  className="w-full py-3 bg-transparent border border-white/10 text-[#929292] text-sm font-medium rounded-lg hover:bg-white/5 hover:text-white transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {/* Processing Info */}
+            {isProcessingPayment && (
+              <p className="text-center text-xs text-[#929292] mt-4">
+                Please confirm the transactions in your wallet. Do not close this window.
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -551,42 +662,6 @@ const FeatureCard: React.FC<{ icon: React.ReactNode; title: string; description:
     </div>
     <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
     <p className="text-sm text-[#929292] leading-relaxed">{description}</p>
-  </div>
-);
-
-const TxStepItem: React.FC<{
-  step: number;
-  title: string;
-  description: string;
-  status: 'PENDING' | 'ACTIVE' | 'COMPLETED';
-  onAction?: () => void
-}> = ({ step, title, description, status, onAction }) => (
-  <div className={`p-5 rounded-xl border transition-all ${
-    status === 'ACTIVE' ? 'bg-[#0b71ff]/5 border-[#0b71ff]/30' : 'bg-[#030303] border-white/5'
-  }`}>
-    <div className="flex items-center justify-between mb-2">
-      <div className="flex items-center gap-3">
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-semibold ${
-          status === 'COMPLETED' ? 'bg-green-500 text-white' : status === 'ACTIVE' ? 'bg-[#0b71ff] text-white' : 'bg-white/5 text-[#929292]'
-        }`}>
-          {status === 'COMPLETED' ? '✓' : step}
-        </div>
-        <span className={`font-semibold text-sm ${status === 'PENDING' ? 'text-[#929292]/50' : 'text-white'}`}>
-          {title}
-        </span>
-      </div>
-      {status === 'ACTIVE' && <Loader2 className="animate-spin text-[#0b71ff]" size={18} />}
-    </div>
-    <p className={`text-xs ml-11 ${status === 'PENDING' ? 'text-[#929292]/30' : 'text-[#929292]'}`}>{description}</p>
-
-    {status === 'ACTIVE' && onAction && (
-      <button
-        onClick={onAction}
-        className="mt-4 w-full py-3 bg-[#0b71ff] text-white text-sm font-semibold rounded-lg hover:bg-[#0960d9] transition-all active:scale-[0.98]"
-      >
-        Confirm
-      </button>
-    )}
   </div>
 );
 

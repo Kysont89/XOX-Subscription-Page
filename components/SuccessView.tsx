@@ -1,14 +1,40 @@
 
 import React from 'react';
 import { Package } from '../types';
-import { ExternalLink, CheckCircle2, ArrowRight } from 'lucide-react';
+import { NetworkConfig, getTxExplorerUrl } from '../config/networks';
+import { ExternalLink, CheckCircle2, ArrowRight, Copy, Check } from 'lucide-react';
 
 interface SuccessViewProps {
   pkg: Package;
+  txHash?: string | null;
+  network?: NetworkConfig | null;
   onReturn: () => void;
 }
 
-const SuccessView: React.FC<SuccessViewProps> = ({ pkg, onReturn }) => {
+const SuccessView: React.FC<SuccessViewProps> = ({ pkg, txHash, network, onReturn }) => {
+  const [copied, setCopied] = React.useState(false);
+
+  const copyTxHash = () => {
+    if (txHash) {
+      navigator.clipboard.writeText(txHash);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const openExplorer = () => {
+    if (txHash && network) {
+      window.open(getTxExplorerUrl(network.id, txHash), '_blank');
+    }
+  };
+
+  const formatTxHash = (hash: string) => {
+    if (hash.length > 20) {
+      return `${hash.slice(0, 10)}...${hash.slice(-8)}`;
+    }
+    return hash;
+  };
+
   return (
     <div className="max-w-2xl mx-auto px-6 py-24 flex flex-col items-center text-center">
       {/* Success Icon */}
@@ -20,7 +46,41 @@ const SuccessView: React.FC<SuccessViewProps> = ({ pkg, onReturn }) => {
 
       {/* Success Message */}
       <h2 className="text-3xl md:text-4xl font-bold mb-3">Subscription Successful!</h2>
-      <p className="text-[#929292] text-lg mb-10">Welcome to the elite trading experience</p>
+      <p className="text-[#929292] text-lg mb-6">Welcome to the elite trading experience</p>
+
+      {/* Transaction Info */}
+      {txHash && network && (
+        <div className="w-full bg-[#030303] border border-white/5 p-4 rounded-lg mb-8">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-[#929292]">Transaction Hash</span>
+            <span className="text-xs px-2 py-0.5 rounded" style={{
+              backgroundColor: `${network.color}20`,
+              color: network.color
+            }}>
+              {network.shortName}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <code className="text-sm text-white font-mono">{formatTxHash(txHash)}</code>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={copyTxHash}
+                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-[#929292] hover:text-white transition-all"
+                title="Copy transaction hash"
+              >
+                {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+              </button>
+              <button
+                onClick={openExplorer}
+                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-[#929292] hover:text-white transition-all"
+                title="View on explorer"
+              >
+                <ExternalLink size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Package Details Card */}
       <div className="w-full bg-[#111111] border border-white/10 p-8 rounded-xl mb-10">

@@ -16,6 +16,13 @@ import {
   checkRateLimit,
   SECURITY_CONFIG
 } from '../utils/security';
+import {
+  checkAdmin,
+  adminLogin,
+  adminLogout,
+  getAdminToken,
+  clearAdminToken
+} from '../services/api';
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -69,21 +76,29 @@ interface UseMultiChainWalletReturn extends WalletState {
   clearError: () => void;
 }
 
-// Admin wallet addresses (lowercase for comparison)
-const ADMIN_WALLETS_EVM = new Set([
+// Fallback admin wallets (for when backend is unavailable)
+const FALLBACK_ADMIN_WALLETS = new Set([
   '0x742d35cc6634c0532925a3b844bc454e4438f44e'
 ]);
 
-const ADMIN_WALLETS_TRON = new Set([
-  // Add your Tron admin addresses here (lowercase)
-]);
-
-function isAdminWallet(address: string | null, networkType: 'evm' | 'tron'): boolean {
+/**
+ * Check if wallet is admin (async, queries backend)
+ */
+async function checkIsAdmin(address: string | null): Promise<boolean> {
   if (!address) return false;
-  if (networkType === 'tron') {
-    return ADMIN_WALLETS_TRON.has(address.toLowerCase());
+
+  try {
+    // Try backend first
+    const result = await checkAdmin(address);
+    if (result.data) {
+      return result.data.isAdmin;
+    }
+  } catch {
+    // Backend unavailable, use fallback
   }
-  return ADMIN_WALLETS_EVM.has(address.toLowerCase());
+
+  // Fallback to hardcoded list
+  return FALLBACK_ADMIN_WALLETS.has(address.toLowerCase());
 }
 
 // ============================================================================
@@ -123,7 +138,7 @@ export function useMultiChainWallet(): UseMultiChainWalletReturn {
                   network,
                   isConnected: true,
                   isVerified: true,
-                  isAdmin: isAdminWallet(session.address, 'evm'),
+                  isAdmin: FALLBACK_ADMIN_WALLETS.has(session.address.toLowerCase()),
                   isAdminVerified: session.isAdmin,
                   isLoading: false,
                   error: null
@@ -142,7 +157,7 @@ export function useMultiChainWallet(): UseMultiChainWalletReturn {
                 network: NETWORKS.TRX,
                 isConnected: true,
                 isVerified: true,
-                isAdmin: isAdminWallet(tronAddress, 'tron'),
+                isAdmin: FALLBACK_ADMIN_WALLETS.has(tronAddress.toLowerCase()),
                 isAdminVerified: session.isAdmin,
                 isLoading: false,
                 error: null
@@ -192,7 +207,7 @@ export function useMultiChainWallet(): UseMultiChainWalletReturn {
           ...prev,
           address: newAddress,
           isVerified: session?.address === newAddress,
-          isAdmin: isAdminWallet(newAddress, 'evm'),
+          isAdmin: FALLBACK_ADMIN_WALLETS.has(newAddress.toLowerCase()),
           isAdminVerified: session?.address === newAddress && session.isAdmin
         }));
       }
@@ -279,7 +294,7 @@ export function useMultiChainWallet(): UseMultiChainWalletReturn {
         network,
         isConnected: true,
         isVerified: false,
-        isAdmin: isAdminWallet(address, 'evm'),
+        isAdmin: FALLBACK_ADMIN_WALLETS.has(address.toLowerCase()),
         isAdminVerified: false,
         isLoading: false,
         error: null
@@ -338,7 +353,7 @@ export function useMultiChainWallet(): UseMultiChainWalletReturn {
         network: NETWORKS.TRX,
         isConnected: true,
         isVerified: false,
-        isAdmin: isAdminWallet(address, 'tron'),
+        isAdmin: FALLBACK_ADMIN_WALLETS.has(address.toLowerCase()),
         isAdminVerified: false,
         isLoading: false,
         error: null
@@ -542,7 +557,14 @@ export function useMultiChainWallet(): UseMultiChainWalletReturn {
         throw new Error('Admin signature rejected');
       }
 
-      await createSession(state.address, signature, nonce, true);
+      // Try backend login first
+      const loginResult = await adminLogin(state.address, signature, message, timestamp);
+
+      if (loginResult.error) {
+        // Backend login failed, fall back to local session
+        console.warn('Backend admin login failed, using local session:', loginResult.error);
+        await createSession(state.address, signature, nonce, true);
+      }
 
       setState(prev => ({
         ...prev,
@@ -569,7 +591,13 @@ export function useMultiChainWallet(): UseMultiChainWalletReturn {
    * Disconnect wallet and clear session
    */
   const disconnectWallet = useCallback(() => {
+    // Clear local session
     clearSession();
+    // Clear admin token
+    clearAdminToken();
+    // Try to logout from backend (fire and forget)
+    adminLogout().catch(() => {});
+
     setState({
       address: null,
       network: null,

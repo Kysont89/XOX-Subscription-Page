@@ -1,13 +1,18 @@
 /**
  * Secure Records Hook
- * Provides subscription record storage with integrity verification
+ * Provides subscription record storage with backend persistence
+ * Falls back to localStorage when offline
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { SubscriptionRecord } from '../types';
-import { secureStore, secureRetrieve, sanitizeInput } from '../utils/security';
-
-const RECORDS_KEY = 'xox_subscriptions_secure';
+import { sanitizeInput } from '../utils/security';
+import {
+  createSubscription,
+  listSubscriptions,
+  getAdminToken,
+  SubscriptionResponse
+} from '../services/api';
 
 interface UseSecureRecordsReturn {
   records: SubscriptionRecord[];
@@ -15,6 +20,7 @@ interface UseSecureRecordsReturn {
   error: string | null;
   integrityValid: boolean;
   saveRecord: (record: SubscriptionRecord) => Promise<boolean>;
+  refreshRecords: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -25,36 +31,31 @@ function sanitizeRecord(record: SubscriptionRecord): SubscriptionRecord {
   return {
     ...record,
     id: sanitizeInput(record.id),
-    userAddress: record.userAddress.toLowerCase(), // Addresses are already safe hex strings
+    userAddress: record.userAddress.toLowerCase(),
     userName: sanitizeInput(record.userName),
     userEmail: sanitizeInput(record.userEmail),
     userPhone: sanitizeInput(record.userPhone),
     packageName: sanitizeInput(record.packageName),
-    txHash: record.txHash.toLowerCase() // Tx hashes are safe hex strings
+    txHash: record.txHash.toLowerCase()
   };
 }
 
 /**
- * Validates record structure
+ * Convert API response to SubscriptionRecord
  */
-function validateRecord(record: unknown): record is SubscriptionRecord {
-  if (!record || typeof record !== 'object') return false;
-
-  const r = record as Record<string, unknown>;
-
-  return (
-    typeof r.id === 'string' &&
-    typeof r.userAddress === 'string' &&
-    typeof r.userName === 'string' &&
-    typeof r.userEmail === 'string' &&
-    typeof r.userPhone === 'string' &&
-    typeof r.packageName === 'string' &&
-    typeof r.amount === 'number' &&
-    typeof r.timestamp === 'number' &&
-    typeof r.txHash === 'string' &&
-    /^0x[a-fA-F0-9]{40}$/.test(r.userAddress as string) &&
-    /^0x[a-fA-F0-9]{64}$/.test(r.txHash as string)
-  );
+function apiToRecord(sub: SubscriptionResponse): SubscriptionRecord {
+  return {
+    id: sub.id,
+    userAddress: sub.user_address,
+    userName: sub.user_name,
+    userEmail: sub.user_email,
+    userPhone: sub.user_phone || '',
+    packageName: sub.package_name,
+    amount: sub.amount,
+    timestamp: new Date(sub.created_at).getTime(),
+    txHash: sub.tx_hash,
+    network: sub.network
+  };
 }
 
 export function useSecureRecords(): UseSecureRecordsReturn {
@@ -63,112 +64,126 @@ export function useSecureRecords(): UseSecureRecordsReturn {
   const [error, setError] = useState<string | null>(null);
   const [integrityValid, setIntegrityValid] = useState(true);
 
-  // Load records on mount
-  useEffect(() => {
-    const loadRecords = async () => {
-      try {
-        // Try to load from secure storage first
-        const result = await secureRetrieve<SubscriptionRecord[]>(RECORDS_KEY);
-
-        if (result.valid && result.data) {
-          // Validate each record
-          const validRecords = result.data.filter(validateRecord);
-          setRecords(validRecords);
+  /**
+   * Load records from backend (admin) or from cache
+   */
+  const loadRecords = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      // If admin is logged in, fetch from backend
+      const adminToken = getAdminToken();
+      if (adminToken) {
+        const result = await listSubscriptions({ limit: 1000 });
+        if (result.data) {
+          const fetchedRecords = result.data.subscriptions.map(apiToRecord);
+          setRecords(fetchedRecords);
           setIntegrityValid(true);
+          setError(null);
         } else if (result.error) {
-          // Integrity check failed - data may have been tampered with
-          console.warn('Data integrity check failed:', result.error);
-          setIntegrityValid(false);
-          setError('Warning: Stored data failed integrity check. Data may have been modified.');
-
-          // Try to recover from legacy storage (non-secure)
-          const legacyData = localStorage.getItem('xox_subscriptions');
-          if (legacyData) {
-            try {
-              const parsed = JSON.parse(legacyData);
-              if (Array.isArray(parsed)) {
-                const validRecords = parsed.filter(validateRecord).map(sanitizeRecord);
-                setRecords(validRecords);
-                // Migrate to secure storage
-                await secureStore(RECORDS_KEY, validRecords);
-                localStorage.removeItem('xox_subscriptions');
-                setIntegrityValid(true);
-                setError(null);
-              }
-            } catch {
-              // Legacy data is corrupted
-              setRecords([]);
-            }
-          }
-        } else {
-          // No data exists, check legacy
-          const legacyData = localStorage.getItem('xox_subscriptions');
-          if (legacyData) {
-            try {
-              const parsed = JSON.parse(legacyData);
-              if (Array.isArray(parsed)) {
-                const validRecords = parsed.filter(validateRecord).map(sanitizeRecord);
-                setRecords(validRecords);
-                // Migrate to secure storage
-                await secureStore(RECORDS_KEY, validRecords);
-                localStorage.removeItem('xox_subscriptions');
-              }
-            } catch {
-              setRecords([]);
-            }
+          // Token might be expired
+          if (result.error.includes('401') || result.error.includes('expired')) {
+            setError('Session expired. Please re-authenticate.');
+          } else {
+            setError(result.error);
           }
         }
-      } catch (error) {
-        console.error('Error loading records:', error);
-        setError('Failed to load subscription records');
-        setRecords([]);
-      } finally {
-        setIsLoading(false);
+      } else {
+        // Non-admin users don't see records, just their own from local cache
+        const localData = localStorage.getItem('xox_my_subscriptions');
+        if (localData) {
+          try {
+            const parsed = JSON.parse(localData);
+            if (Array.isArray(parsed)) {
+              setRecords(parsed);
+            }
+          } catch {
+            setRecords([]);
+          }
+        }
       }
-    };
-
-    loadRecords();
+    } catch (err) {
+      console.error('Error loading records:', err);
+      setError('Failed to load subscription records');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
+  // Load records on mount
+  useEffect(() => {
+    loadRecords();
+  }, [loadRecords]);
+
   /**
-   * Save a new record with integrity protection
+   * Refresh records from backend
+   */
+  const refreshRecords = useCallback(async () => {
+    await loadRecords();
+  }, [loadRecords]);
+
+  /**
+   * Save a new record to backend and local cache
    */
   const saveRecord = useCallback(async (record: SubscriptionRecord): Promise<boolean> => {
     try {
-      // Validate record
-      if (!validateRecord(record)) {
-        setError('Invalid record format');
-        return false;
-      }
-
       // Sanitize record
       const sanitized = sanitizeRecord(record);
 
-      // Check for duplicate
-      const isDuplicate = records.some(
-        r => r.txHash === sanitized.txHash || r.id === sanitized.id
-      );
+      // Save to backend
+      const result = await createSubscription({
+        userAddress: sanitized.userAddress,
+        userName: sanitized.userName,
+        userEmail: sanitized.userEmail,
+        userPhone: sanitized.userPhone || undefined,
+        packageName: sanitized.packageName,
+        amount: sanitized.amount,
+        network: sanitized.network || 'ETH',
+        txHash: sanitized.txHash
+      });
 
-      if (isDuplicate) {
-        setError('Duplicate record detected');
+      if (result.error) {
+        // Check if it's a duplicate (already recorded)
+        if (result.error.includes('already recorded')) {
+          // Not an error - transaction was already saved
+          console.log('Transaction already recorded');
+          return true;
+        }
+        setError(result.error);
         return false;
       }
 
-      // Add to records (newest first)
-      const updatedRecords = [sanitized, ...records];
-      setRecords(updatedRecords);
+      // Also save to local cache for user's reference
+      const localData = localStorage.getItem('xox_my_subscriptions');
+      let myRecords: SubscriptionRecord[] = [];
+      if (localData) {
+        try {
+          myRecords = JSON.parse(localData);
+        } catch {
+          myRecords = [];
+        }
+      }
 
-      // Save to secure storage
-      await secureStore(RECORDS_KEY, updatedRecords);
-      setIntegrityValid(true);
+      // Add new record if not duplicate
+      const isDuplicate = myRecords.some(r => r.txHash === sanitized.txHash);
+      if (!isDuplicate) {
+        myRecords = [sanitized, ...myRecords];
+        localStorage.setItem('xox_my_subscriptions', JSON.stringify(myRecords));
+      }
+
+      // Update state
+      setRecords(prev => {
+        const exists = prev.some(r => r.txHash === sanitized.txHash);
+        if (exists) return prev;
+        return [sanitized, ...prev];
+      });
 
       return true;
-    } catch (error) {
-      console.error('Error saving record:', error);
+    } catch (err) {
+      console.error('Error saving record:', err);
       setError('Failed to save record');
       return false;
     }
-  }, [records]);
+  }, []);
 
   /**
    * Clear error message
@@ -183,6 +198,7 @@ export function useSecureRecords(): UseSecureRecordsReturn {
     error,
     integrityValid,
     saveRecord,
+    refreshRecords,
     clearError
   };
 }

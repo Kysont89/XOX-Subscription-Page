@@ -4,7 +4,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getSupabaseClient } from '../../lib/supabase';
+import { getDatabase } from '../../lib/database';
 import { verifyTransaction, getReceivingWallet } from '../../lib/blockchain';
 
 // Input validation
@@ -105,16 +105,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = validation.data;
-    const supabase = getSupabaseClient();
+    const sql = getDatabase();
 
     // Check if tx_hash already exists
-    const { data: existing } = await supabase
-      .from('subscriptions')
-      .select('id')
-      .eq('tx_hash', data.txHash)
-      .single();
+    const existing = await sql`
+      SELECT id FROM subscriptions WHERE tx_hash = ${data.txHash}
+    `;
 
-    if (existing) {
+    if (existing.length > 0) {
       return res.status(409).json({ error: 'Transaction already recorded' });
     }
 
@@ -122,39 +120,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const receivingWallet = getReceivingWallet(data.network);
 
     // Insert subscription record
-    const { data: subscription, error: insertError } = await supabase
-      .from('subscriptions')
-      .insert({
-        user_address: data.userAddress,
-        user_name: data.userName,
-        user_email: data.userEmail,
-        user_phone: data.userPhone,
-        package_name: data.packageName,
-        amount: data.amount,
-        network: data.network,
-        tx_hash: data.txHash,
-        tx_verified: false
-      })
-      .select()
-      .single();
+    const result = await sql`
+      INSERT INTO subscriptions (
+        user_address, user_name, user_email, user_phone,
+        package_name, amount, network, tx_hash, tx_verified
+      ) VALUES (
+        ${data.userAddress}, ${data.userName}, ${data.userEmail}, ${data.userPhone},
+        ${data.packageName}, ${data.amount}, ${data.network}, ${data.txHash}, false
+      )
+      RETURNING id, tx_hash, created_at
+    `;
 
-    if (insertError) {
-      console.error('Insert error:', insertError);
-      return res.status(500).json({ error: 'Failed to save subscription' });
-    }
+    const subscription = result[0];
 
     // Attempt to verify transaction (async, non-blocking for response)
     if (receivingWallet) {
       verifyTransaction(data.txHash, data.network, receivingWallet, data.amount)
-        .then(async (result) => {
-          if (result.verified) {
-            await supabase
-              .from('subscriptions')
-              .update({
-                tx_verified: true,
-                verified_at: new Date().toISOString()
-              })
-              .eq('id', subscription.id);
+        .then(async (verifyResult) => {
+          if (verifyResult.verified) {
+            await sql`
+              UPDATE subscriptions
+              SET tx_verified = true, verified_at = NOW()
+              WHERE id = ${subscription.id}
+            `;
           }
         })
         .catch(console.error);

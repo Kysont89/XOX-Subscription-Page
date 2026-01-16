@@ -4,7 +4,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getSupabaseClient } from '../lib/supabase';
+import { getDatabase } from '../lib/database';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
@@ -17,13 +17,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   };
 
   try {
-    // Check Supabase connection
-    const supabase = getSupabaseClient();
-    const { error } = await supabase.from('subscriptions').select('id').limit(1);
-    checks.database = !error;
-    if (error) {
-      checks.databaseError = error.message;
-    }
+    // Check Neon database connection
+    const sql = getDatabase();
+    await sql`SELECT 1`;
+    checks.database = true;
   } catch (e) {
     checks.database = false;
     checks.databaseError = e instanceof Error ? e.message : 'Unknown error';
@@ -31,8 +28,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Check environment variables
   checks.envConfigured = !!(
-    process.env.SUPABASE_URL &&
-    process.env.SUPABASE_SERVICE_KEY &&
+    process.env.DATABASE_URL &&
     process.env.RECEIVING_WALLET_EVM
   );
 

@@ -4,7 +4,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getSupabaseClient } from '../../lib/supabase';
+import { getDatabase } from '../../lib/database';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Only allow POST
@@ -19,18 +19,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const sessionToken = authHeader.slice(7);
-    const supabase = getSupabaseClient();
+    const sql = getDatabase();
 
     // Delete the session
-    const { error } = await supabase
-      .from('admin_sessions')
-      .delete()
-      .eq('session_token', sessionToken);
-
-    if (error) {
-      console.error('Logout error:', error);
-      return res.status(500).json({ error: 'Failed to logout' });
-    }
+    await sql`DELETE FROM admin_sessions WHERE session_token = ${sessionToken}`;
 
     return res.status(200).json({ success: true });
   } catch (error) {

@@ -1,5 +1,5 @@
--- XOX VIP Subscription Database Schema
--- Run this SQL in your Supabase SQL Editor to set up the database
+-- XOX VIP Subscription Database Schema for Neon
+-- Run this SQL in Neon SQL Editor to set up the database
 
 -- ============================================================================
 -- TABLE: subscriptions
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS admins (
 );
 
 -- Create index for wallet lookup
-CREATE INDEX IF NOT EXISTS idx_admins_wallet_address ON admins(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_admins_wallet_address ON admins(LOWER(wallet_address));
 
 -- ============================================================================
 -- TABLE: admin_sessions
@@ -58,23 +58,6 @@ CREATE INDEX IF NOT EXISTS idx_admin_sessions_token ON admin_sessions(session_to
 CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
 
 -- ============================================================================
--- Enable Row Level Security (RLS)
--- ============================================================================
-ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE admins ENABLE ROW LEVEL SECURITY;
-ALTER TABLE admin_sessions ENABLE ROW LEVEL SECURITY;
-
--- Service role can do everything (used by API routes)
-CREATE POLICY "Service role full access on subscriptions" ON subscriptions
-  FOR ALL USING (auth.role() = 'service_role');
-
-CREATE POLICY "Service role full access on admins" ON admins
-  FOR ALL USING (auth.role() = 'service_role');
-
-CREATE POLICY "Service role full access on admin_sessions" ON admin_sessions
-  FOR ALL USING (auth.role() = 'service_role');
-
--- ============================================================================
 -- INSERT YOUR ADMIN WALLET(S) HERE
 -- Replace the example address with your actual admin wallet address
 -- ============================================================================
@@ -86,16 +69,3 @@ ON CONFLICT (wallet_address) DO NOTHING;
 -- Add more admins as needed:
 -- INSERT INTO admins (wallet_address, name, is_active)
 -- VALUES ('0xYOUR_WALLET_ADDRESS', 'Admin Name', true);
-
--- ============================================================================
--- CLEANUP: Function to delete expired sessions (run daily via cron)
--- ============================================================================
-CREATE OR REPLACE FUNCTION cleanup_expired_sessions()
-RETURNS void AS $$
-BEGIN
-  DELETE FROM admin_sessions WHERE expires_at < NOW();
-END;
-$$ LANGUAGE plpgsql;
-
--- Optional: Set up a pg_cron job to run cleanup daily
--- SELECT cron.schedule('cleanup-sessions', '0 0 * * *', 'SELECT cleanup_expired_sessions()');

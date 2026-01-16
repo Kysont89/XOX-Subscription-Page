@@ -5,7 +5,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { ethers } from 'ethers';
-import { getSupabaseClient, generateSessionToken } from '../../lib/supabase';
+import { getDatabase, generateSessionToken } from '../../lib/database';
 
 // Session duration: 1 hour
 const SESSION_DURATION_MS = 60 * 60 * 1000;
@@ -31,19 +31,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Message expired or invalid timestamp' });
     }
 
-    const supabase = getSupabaseClient();
+    const sql = getDatabase();
 
     // Check if wallet is admin
-    const { data: admin, error: adminError } = await supabase
-      .from('admins')
-      .select('id, is_active')
-      .eq('wallet_address', address.toLowerCase())
-      .single();
+    const admins = await sql`
+      SELECT id, is_active
+      FROM admins
+      WHERE LOWER(wallet_address) = LOWER(${address})
+    `;
 
-    if (adminError || !admin) {
+    if (admins.length === 0) {
       return res.status(403).json({ error: 'Not an admin wallet' });
     }
 
+    const admin = admins[0];
     if (!admin.is_active) {
       return res.status(403).json({ error: 'Admin account is disabled' });
     }
@@ -63,24 +64,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const expiresAt = new Date(now + SESSION_DURATION_MS);
 
     // Delete any existing sessions for this admin
-    await supabase
-      .from('admin_sessions')
-      .delete()
-      .eq('admin_id', admin.id);
+    await sql`DELETE FROM admin_sessions WHERE admin_id = ${admin.id}`;
 
     // Create new session
-    const { error: sessionError } = await supabase
-      .from('admin_sessions')
-      .insert({
-        admin_id: admin.id,
-        session_token: sessionToken,
-        expires_at: expiresAt.toISOString()
-      });
-
-    if (sessionError) {
-      console.error('Session creation error:', sessionError);
-      return res.status(500).json({ error: 'Failed to create session' });
-    }
+    await sql`
+      INSERT INTO admin_sessions (admin_id, session_token, expires_at)
+      VALUES (${admin.id}, ${sessionToken}, ${expiresAt.toISOString()})
+    `;
 
     return res.status(200).json({
       success: true,

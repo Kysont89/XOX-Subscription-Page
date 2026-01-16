@@ -4,7 +4,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getSupabaseClient } from '../../lib/supabase';
+import { getDatabase } from '../../lib/database';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Only allow GET
@@ -19,19 +19,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Wallet address is required' });
     }
 
-    const supabase = getSupabaseClient();
+    const sql = getDatabase();
 
     // Check if wallet is in admins table
-    const { data: admin, error } = await supabase
-      .from('admins')
-      .select('id, name, is_active')
-      .eq('wallet_address', address.toLowerCase())
-      .single();
+    const admins = await sql`
+      SELECT id, name, is_active
+      FROM admins
+      WHERE LOWER(wallet_address) = LOWER(${address})
+    `;
 
-    if (error || !admin) {
+    if (admins.length === 0) {
       return res.status(200).json({ isAdmin: false });
     }
 
+    const admin = admins[0];
     return res.status(200).json({
       isAdmin: admin.is_active,
       name: admin.name

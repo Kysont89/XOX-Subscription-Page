@@ -4,7 +4,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getSupabaseClient } from '../../lib/supabase';
+import { getDatabase } from '../../lib/database';
 import { verifyTransaction, getReceivingWallet } from '../../lib/blockchain';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -20,22 +20,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Either subscriptionId or txHash is required' });
     }
 
-    const supabase = getSupabaseClient();
+    const sql = getDatabase();
 
     // Find the subscription
-    let query = supabase.from('subscriptions').select('*');
-
+    let subscriptions;
     if (subscriptionId) {
-      query = query.eq('id', subscriptionId);
+      subscriptions = await sql`
+        SELECT * FROM subscriptions WHERE id = ${subscriptionId}
+      `;
     } else {
-      query = query.eq('tx_hash', txHash);
+      subscriptions = await sql`
+        SELECT * FROM subscriptions WHERE tx_hash = ${txHash}
+      `;
     }
 
-    const { data: subscription, error: fetchError } = await query.single();
-
-    if (fetchError || !subscription) {
+    if (subscriptions.length === 0) {
       return res.status(404).json({ error: 'Subscription not found' });
     }
+
+    const subscription = subscriptions[0];
 
     // Already verified
     if (subscription.tx_verified) {
@@ -57,18 +60,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       subscription.tx_hash,
       subscription.network,
       receivingWallet,
-      subscription.amount
+      Number(subscription.amount)
     );
 
     if (result.verified) {
       // Update subscription
-      await supabase
-        .from('subscriptions')
-        .update({
-          tx_verified: true,
-          verified_at: new Date().toISOString()
-        })
-        .eq('id', subscription.id);
+      await sql`
+        UPDATE subscriptions
+        SET tx_verified = true, verified_at = NOW()
+        WHERE id = ${subscription.id}
+      `;
 
       return res.status(200).json({
         verified: true,

@@ -4,7 +4,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getSupabaseClient } from '../../lib/supabase';
+import { getDatabase } from '../../lib/database';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Only allow GET
@@ -20,63 +20,82 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const sessionToken = authHeader.slice(7);
-    const supabase = getSupabaseClient();
+    const sql = getDatabase();
 
     // Verify admin session
-    const { data: session, error: sessionError } = await supabase
-      .from('admin_sessions')
-      .select('*, admins(*)')
-      .eq('session_token', sessionToken)
-      .gt('expires_at', new Date().toISOString())
-      .single();
+    const sessions = await sql`
+      SELECT s.*, a.is_active
+      FROM admin_sessions s
+      JOIN admins a ON s.admin_id = a.id
+      WHERE s.session_token = ${sessionToken}
+        AND s.expires_at > NOW()
+    `;
 
-    if (sessionError || !session) {
+    if (sessions.length === 0) {
       return res.status(401).json({ error: 'Invalid or expired session' });
     }
 
-    // Check if admin is active
-    if (!session.admins?.is_active) {
+    const session = sessions[0];
+    if (!session.is_active) {
       return res.status(403).json({ error: 'Admin account is disabled' });
     }
 
     // Get query parameters for filtering
     const { network, verified, limit = '100', offset = '0' } = req.query;
+    const limitNum = Math.min(Number(limit) || 100, 1000);
+    const offsetNum = Number(offset) || 0;
 
-    // Build query
-    let query = supabase
-      .from('subscriptions')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .range(Number(offset), Number(offset) + Number(limit) - 1);
+    // Build and execute query based on filters
+    let subscriptions;
+    let countResult;
 
-    // Apply filters
-    if (network && typeof network === 'string') {
-      query = query.eq('network', network);
+    if (network && verified !== undefined) {
+      const isVerified = verified === 'true';
+      subscriptions = await sql`
+        SELECT * FROM subscriptions
+        WHERE network = ${network} AND tx_verified = ${isVerified}
+        ORDER BY created_at DESC
+        LIMIT ${limitNum} OFFSET ${offsetNum}
+      `;
+      countResult = await sql`
+        SELECT COUNT(*) as count FROM subscriptions
+        WHERE network = ${network} AND tx_verified = ${isVerified}
+      `;
+    } else if (network) {
+      subscriptions = await sql`
+        SELECT * FROM subscriptions
+        WHERE network = ${network}
+        ORDER BY created_at DESC
+        LIMIT ${limitNum} OFFSET ${offsetNum}
+      `;
+      countResult = await sql`
+        SELECT COUNT(*) as count FROM subscriptions WHERE network = ${network}
+      `;
+    } else if (verified !== undefined) {
+      const isVerified = verified === 'true';
+      subscriptions = await sql`
+        SELECT * FROM subscriptions
+        WHERE tx_verified = ${isVerified}
+        ORDER BY created_at DESC
+        LIMIT ${limitNum} OFFSET ${offsetNum}
+      `;
+      countResult = await sql`
+        SELECT COUNT(*) as count FROM subscriptions WHERE tx_verified = ${isVerified}
+      `;
+    } else {
+      subscriptions = await sql`
+        SELECT * FROM subscriptions
+        ORDER BY created_at DESC
+        LIMIT ${limitNum} OFFSET ${offsetNum}
+      `;
+      countResult = await sql`SELECT COUNT(*) as count FROM subscriptions`;
     }
-
-    if (verified === 'true') {
-      query = query.eq('tx_verified', true);
-    } else if (verified === 'false') {
-      query = query.eq('tx_verified', false);
-    }
-
-    const { data: subscriptions, error: fetchError } = await query;
-
-    if (fetchError) {
-      console.error('Fetch error:', fetchError);
-      return res.status(500).json({ error: 'Failed to fetch subscriptions' });
-    }
-
-    // Get total count
-    const { count } = await supabase
-      .from('subscriptions')
-      .select('*', { count: 'exact', head: true });
 
     return res.status(200).json({
       subscriptions: subscriptions || [],
-      total: count || 0,
-      limit: Number(limit),
-      offset: Number(offset)
+      total: Number(countResult[0]?.count) || 0,
+      limit: limitNum,
+      offset: offsetNum
     });
   } catch (error) {
     console.error('List subscriptions error:', error);

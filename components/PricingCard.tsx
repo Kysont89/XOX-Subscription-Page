@@ -43,7 +43,7 @@ const PricingCard: React.FC<PricingCardProps> = ({ pkg, onSubscribe, disabled })
 
       {/* Features */}
       <div className="space-y-4 mb-6 flex-grow">
-        <Feature label="Trading Fees" value={pkg.tradingFee} sub={`${pkg.feeDiscount} Off`} />
+        <Feature label="Token Valuation" value={pkg.tradingFee} sub={`${pkg.feeDiscount} Off`} />
         <Feature label="Point Multiplier" value={pkg.pointMultiplier} />
         <Feature label="Commission Rebate" value={pkg.rebate} />
       </div>

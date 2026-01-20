@@ -9,7 +9,7 @@ import WalletModal from './components/WalletModal';
 import AdminAuthGate from './components/AdminAuthGate';
 import { PACKAGES } from './constants';
 import { Package, AppState, SubscriptionRecord, VipLevel } from './types';
-import { useMultiChainWallet } from './hooks/useMultiChainWallet';
+import { useUnifiedWallet } from './hooks/useUnifiedWallet';
 import { useSecureRecords } from './hooks/useSecureRecords';
 import { sanitizeInput, validateAddress } from './utils/security';
 import { NetworkConfig, getTxExplorerUrl } from './config/networks';
@@ -44,9 +44,10 @@ const App: React.FC = () => {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
   const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [pendingNavigation, setPendingNavigation] = useState<AppState | null>(null);
 
-  // Use multi-chain wallet hook
-  const wallet = useMultiChainWallet();
+  // Use unified wallet hook (AppKit + TronLink)
+  const wallet = useUnifiedWallet();
 
   // Use secure records hook
   const { records, saveRecord, error: recordsError, integrityValid } = useSecureRecords();
@@ -67,14 +68,34 @@ const App: React.FC = () => {
     }
   }, [wallet.address, subscribingPackage, isCollectingDetails, txStep]);
 
+  // Redirect to LANDING if wallet disconnects while on DASHBOARD
+  useEffect(() => {
+    if (!wallet.isConnected && appState === 'DASHBOARD') {
+      setAppState('LANDING');
+    }
+  }, [wallet.isConnected, appState]);
+
+  // Navigate to pending destination after wallet connects
+  useEffect(() => {
+    if (wallet.isConnected && pendingNavigation) {
+      setAppState(pendingNavigation);
+      setPendingNavigation(null);
+    }
+  }, [wallet.isConnected, pendingNavigation]);
+
   const openWalletModal = useCallback(() => {
     setShowWalletModal(true);
   }, []);
 
-  const handleWalletSelect = useCallback(async (walletId: string, network: NetworkConfig) => {
-    setShowWalletModal(false);
-    await wallet.connectWallet(walletId, network);
-  }, [wallet]);
+  // Handle navigation to pages that require wallet
+  const navigateWithWalletCheck = useCallback((targetState: AppState) => {
+    if (targetState === 'DASHBOARD' && !wallet.isConnected) {
+      setPendingNavigation('DASHBOARD');
+      setShowWalletModal(true);
+      return;
+    }
+    setAppState(targetState);
+  }, [wallet.isConnected]);
 
   const startSubscription = useCallback(async (pkg: Package) => {
     if (!wallet.address) {
@@ -236,7 +257,7 @@ const App: React.FC = () => {
 
         {appState === 'LANDING' && (
           <LandingHero
-            onViewPackages={() => setAppState('DASHBOARD')}
+            onViewPackages={() => navigateWithWalletCheck('DASHBOARD')}
             onVisitWebsite={() => window.open('https://xox.exchange/', '_blank')}
           />
         )}
@@ -470,7 +491,8 @@ const App: React.FC = () => {
       <WalletModal
         isOpen={showWalletModal}
         onClose={() => setShowWalletModal(false)}
-        onSelectWallet={handleWalletSelect}
+        onConnectTron={wallet.connectTron}
+        onOpenAppKit={wallet.openModal}
       />
     </div>
   );

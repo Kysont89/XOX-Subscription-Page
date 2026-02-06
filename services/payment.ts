@@ -1,9 +1,14 @@
 /**
  * Payment Service
  * Handles real USDT transfers on ETH, BNB, and TRX networks
+ * EVM transactions use wagmi/viem (supports WalletConnect + injected wallets)
+ * Tron transactions use TronLink directly
  */
 
+import { getPublicClient, getWalletClient } from '@wagmi/core';
+import { parseUnits, erc20Abi } from 'viem';
 import { NetworkConfig, NetworkId, NETWORKS } from '../config/networks';
+import { wagmiConfig } from '../config/web3';
 
 // ============================================================================
 // RECEIVING WALLET ADDRESSES - UPDATE THESE WITH YOUR ADDRESSES
@@ -26,58 +31,6 @@ export const USDT_CONTRACTS = {
 };
 
 // ============================================================================
-// ERC-20 / BEP-20 ABI (Minimal for transfers)
-// ============================================================================
-const ERC20_ABI = [
-  // Read functions
-  {
-    constant: true,
-    inputs: [{ name: '_owner', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: 'balance', type: 'uint256' }],
-    type: 'function'
-  },
-  {
-    constant: true,
-    inputs: [
-      { name: '_owner', type: 'address' },
-      { name: '_spender', type: 'address' }
-    ],
-    name: 'allowance',
-    outputs: [{ name: '', type: 'uint256' }],
-    type: 'function'
-  },
-  {
-    constant: true,
-    inputs: [],
-    name: 'decimals',
-    outputs: [{ name: '', type: 'uint8' }],
-    type: 'function'
-  },
-  // Write functions
-  {
-    constant: false,
-    inputs: [
-      { name: '_spender', type: 'address' },
-      { name: '_value', type: 'uint256' }
-    ],
-    name: 'approve',
-    outputs: [{ name: '', type: 'bool' }],
-    type: 'function'
-  },
-  {
-    constant: false,
-    inputs: [
-      { name: '_to', type: 'address' },
-      { name: '_value', type: 'uint256' }
-    ],
-    name: 'transfer',
-    outputs: [{ name: '', type: 'bool' }],
-    type: 'function'
-  }
-];
-
-// ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
 export interface PaymentResult {
@@ -95,11 +48,6 @@ export interface TransactionStatus {
 
 declare global {
   interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      on: (event: string, callback: (...args: unknown[]) => void) => void;
-      removeListener: (event: string, callback: (...args: unknown[]) => void) => void;
-    };
     tronWeb?: {
       ready: boolean;
       defaultAddress: {
@@ -131,15 +79,6 @@ interface TronContract {
 // ============================================================================
 
 /**
- * Convert amount to token units based on decimals
- */
-function toTokenUnits(amount: number, decimals: number): string {
-  const multiplier = BigInt(10 ** decimals);
-  const amountBigInt = BigInt(Math.floor(amount)) * multiplier;
-  return '0x' + amountBigInt.toString(16);
-}
-
-/**
  * Get receiving wallet for network
  */
 export function getReceivingWallet(networkId: NetworkId): string {
@@ -169,30 +108,26 @@ export function isWalletConfigured(networkId: NetworkId): boolean {
 }
 
 // ============================================================================
-// EVM PAYMENT (ETH / BNB)
+// EVM PAYMENT (ETH / BNB) - via wagmi/viem
 // ============================================================================
 
 /**
- * Get USDT balance for EVM chains
+ * Get USDT balance for EVM chains using wagmi public client
  */
 export async function getEVMBalance(userAddress: string, network: NetworkConfig): Promise<number> {
-  if (!window.ethereum) throw new Error('No EVM wallet found');
+  const publicClient = getPublicClient(wagmiConfig);
+  if (!publicClient) throw new Error('No EVM client available');
 
-  const usdtContract = USDT_CONTRACTS[network.id as 'ETH' | 'BNB'];
+  const usdtContract = USDT_CONTRACTS[network.id as 'ETH' | 'BNB'] as `0x${string}`;
 
-  const balance = await window.ethereum.request({
-    method: 'eth_call',
-    params: [
-      {
-        to: usdtContract,
-        data: '0x70a08231000000000000000000000000' + userAddress.slice(2).toLowerCase()
-      },
-      'latest'
-    ]
-  }) as string;
+  const balance = await publicClient.readContract({
+    address: usdtContract,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [userAddress as `0x${string}`]
+  });
 
-  const balanceNum = parseInt(balance, 16);
-  return balanceNum / (10 ** network.usdtDecimals);
+  return Number(balance) / (10 ** network.usdtDecimals);
 }
 
 /**
@@ -203,55 +138,46 @@ export async function getEVMAllowance(
   spenderAddress: string,
   network: NetworkConfig
 ): Promise<number> {
-  if (!window.ethereum) throw new Error('No EVM wallet found');
+  const publicClient = getPublicClient(wagmiConfig);
+  if (!publicClient) throw new Error('No EVM client available');
 
-  const usdtContract = USDT_CONTRACTS[network.id as 'ETH' | 'BNB'];
+  const usdtContract = USDT_CONTRACTS[network.id as 'ETH' | 'BNB'] as `0x${string}`;
 
-  // allowance(owner, spender)
-  const data = '0xdd62ed3e' +
-    '000000000000000000000000' + userAddress.slice(2).toLowerCase() +
-    '000000000000000000000000' + spenderAddress.slice(2).toLowerCase();
+  const allowance = await publicClient.readContract({
+    address: usdtContract,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [userAddress as `0x${string}`, spenderAddress as `0x${string}`]
+  });
 
-  const allowance = await window.ethereum.request({
-    method: 'eth_call',
-    params: [{ to: usdtContract, data }, 'latest']
-  }) as string;
-
-  const allowanceNum = parseInt(allowance, 16);
-  return allowanceNum / (10 ** network.usdtDecimals);
+  return Number(allowance) / (10 ** network.usdtDecimals);
 }
 
 /**
- * Approve USDT spending for EVM chains
+ * Approve USDT spending for EVM chains via wagmi wallet client
  */
 export async function approveEVMPayment(
   userAddress: string,
   amount: number,
   network: NetworkConfig
 ): Promise<PaymentResult> {
-  if (!window.ethereum) {
-    return { success: false, error: 'No EVM wallet found' };
-  }
-
   try {
-    const usdtContract = USDT_CONTRACTS[network.id as 'ETH' | 'BNB'];
-    const receivingWallet = getReceivingWallet(network.id);
-    const amountHex = toTokenUnits(amount, network.usdtDecimals);
+    const walletClient = await getWalletClient(wagmiConfig);
+    if (!walletClient) {
+      return { success: false, error: 'No EVM wallet connected' };
+    }
 
-    // approve(spender, amount)
-    const data = '0x095ea7b3' +
-      '000000000000000000000000' + receivingWallet.slice(2).toLowerCase() +
-      amountHex.slice(2).padStart(64, '0');
+    const usdtContract = USDT_CONTRACTS[network.id as 'ETH' | 'BNB'] as `0x${string}`;
+    const receivingWallet = getReceivingWallet(network.id) as `0x${string}`;
+    const amountInUnits = parseUnits(amount.toString(), network.usdtDecimals);
 
-    const txHash = await window.ethereum.request({
-      method: 'eth_sendTransaction',
-      params: [{
-        from: userAddress,
-        to: usdtContract,
-        data: data,
-        gas: '0x186A0' // 100000 gas
-      }]
-    }) as string;
+    const txHash = await walletClient.writeContract({
+      address: usdtContract,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [receivingWallet, amountInUnits],
+      account: userAddress as `0x${string}`
+    });
 
     return { success: true, txHash };
   } catch (error: unknown) {
@@ -261,36 +187,30 @@ export async function approveEVMPayment(
 }
 
 /**
- * Transfer USDT for EVM chains
+ * Transfer USDT for EVM chains via wagmi wallet client
  */
 export async function transferEVMPayment(
   userAddress: string,
   amount: number,
   network: NetworkConfig
 ): Promise<PaymentResult> {
-  if (!window.ethereum) {
-    return { success: false, error: 'No EVM wallet found' };
-  }
-
   try {
-    const usdtContract = USDT_CONTRACTS[network.id as 'ETH' | 'BNB'];
-    const receivingWallet = getReceivingWallet(network.id);
-    const amountHex = toTokenUnits(amount, network.usdtDecimals);
+    const walletClient = await getWalletClient(wagmiConfig);
+    if (!walletClient) {
+      return { success: false, error: 'No EVM wallet connected' };
+    }
 
-    // transfer(to, amount)
-    const data = '0xa9059cbb' +
-      '000000000000000000000000' + receivingWallet.slice(2).toLowerCase() +
-      amountHex.slice(2).padStart(64, '0');
+    const usdtContract = USDT_CONTRACTS[network.id as 'ETH' | 'BNB'] as `0x${string}`;
+    const receivingWallet = getReceivingWallet(network.id) as `0x${string}`;
+    const amountInUnits = parseUnits(amount.toString(), network.usdtDecimals);
 
-    const txHash = await window.ethereum.request({
-      method: 'eth_sendTransaction',
-      params: [{
-        from: userAddress,
-        to: usdtContract,
-        data: data,
-        gas: '0x186A0' // 100000 gas
-      }]
-    }) as string;
+    const txHash = await walletClient.writeContract({
+      address: usdtContract,
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [receivingWallet, amountInUnits],
+      account: userAddress as `0x${string}`
+    });
 
     return { success: true, txHash };
   } catch (error: unknown) {
@@ -300,36 +220,25 @@ export async function transferEVMPayment(
 }
 
 /**
- * Wait for EVM transaction confirmation
+ * Wait for EVM transaction confirmation using wagmi public client
  */
 export async function waitForEVMConfirmation(txHash: string): Promise<TransactionStatus> {
-  if (!window.ethereum) {
-    return { status: 'failed', error: 'No EVM wallet found' };
-  }
-
   try {
-    let attempts = 0;
-    const maxAttempts = 60; // 5 minutes with 5 second intervals
-
-    while (attempts < maxAttempts) {
-      const receipt = await window.ethereum.request({
-        method: 'eth_getTransactionReceipt',
-        params: [txHash]
-      }) as { status: string; blockNumber: string } | null;
-
-      if (receipt) {
-        if (receipt.status === '0x1') {
-          return { status: 'confirmed', txHash, confirmations: 1 };
-        } else {
-          return { status: 'failed', txHash, error: 'Transaction reverted' };
-        }
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      attempts++;
+    const publicClient = getPublicClient(wagmiConfig);
+    if (!publicClient) {
+      return { status: 'failed', error: 'No EVM client available' };
     }
 
-    return { status: 'pending', txHash, error: 'Confirmation timeout' };
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash as `0x${string}`,
+      timeout: 300_000 // 5 minutes
+    });
+
+    if (receipt.status === 'success') {
+      return { status: 'confirmed', txHash, confirmations: 1 };
+    } else {
+      return { status: 'failed', txHash, error: 'Transaction reverted' };
+    }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to check confirmation';
     return { status: 'failed', txHash, error: errorMessage };
@@ -337,7 +246,7 @@ export async function waitForEVMConfirmation(txHash: string): Promise<Transactio
 }
 
 // ============================================================================
-// TRON PAYMENT (TRX)
+// TRON PAYMENT (TRX) - unchanged, uses TronLink directly
 // ============================================================================
 
 /**
@@ -493,7 +402,7 @@ export async function processPayment(
         return { success: false, error: transferStatus.error || 'Transfer failed' };
       }
     } else {
-      // EVM payment flow (ETH/BNB)
+      // EVM payment flow (ETH/BNB) - via wagmi/viem
       onStatusChange?.('Requesting USDT approval...');
       const approvalResult = await approveEVMPayment(userAddress, amount, network);
 

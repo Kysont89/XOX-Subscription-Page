@@ -1,7 +1,8 @@
 
-import React from 'react';
-import { X } from 'lucide-react';
-import { NetworkId } from '../config/networks';
+import React, { useState } from 'react';
+import { X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useAppKit } from '@reown/appkit/react';
+import { NetworkId, NETWORK_LIST, NetworkConfig, NETWORKS } from '../config/networks';
 
 // ============================================================================
 // NETWORK ICONS
@@ -47,7 +48,9 @@ const NetworkIcon: React.FC<{ networkId: NetworkId; className?: string }> = ({ n
   }
 };
 
-// TronLink Icon
+// ============================================================================
+// WALLET ICONS (TronLink only - EVM wallets handled by Reown)
+// ============================================================================
 const TronLinkIcon = () => (
   <svg viewBox="0 0 40 40" fill="none" className="w-7 h-7">
     <rect width="40" height="40" rx="8" fill="#2B2F3B"/>
@@ -62,26 +65,54 @@ const TronLinkIcon = () => (
 interface WalletModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnectTron: () => Promise<boolean>;
-  onOpenAppKit: () => void;
+  onSelectWallet: (walletId: string, network: NetworkConfig) => Promise<boolean>;
+  selectedNetwork?: NetworkId;
 }
 
-const WalletModal: React.FC<WalletModalProps> = ({
-  isOpen,
-  onClose,
-  onConnectTron,
-  onOpenAppKit
-}) => {
+const WalletModal: React.FC<WalletModalProps> = ({ isOpen, onClose, onSelectWallet, selectedNetwork: initialNetwork }) => {
+  const [step, setStep] = useState<'network' | 'wallet'>('network');
+  const [selectedNetwork, setSelectedNetwork] = useState<NetworkConfig | null>(
+    initialNetwork ? NETWORK_LIST.find(n => n.id === initialNetwork) || null : null
+  );
+  const { open: openAppKit } = useAppKit();
+
   if (!isOpen) return null;
 
-  const handleTronSelect = async () => {
-    onClose();
-    await onConnectTron();
+  const handleNetworkSelect = (network: NetworkConfig) => {
+    if (network.walletType === 'evm') {
+      // For EVM networks, open Reown AppKit modal directly
+      onClose();
+      // Reset state for next time
+      setStep('network');
+      setSelectedNetwork(null);
+      // Open AppKit - it handles wallet selection, QR codes, chain switching
+      openAppKit({ view: 'Connect' });
+      // Store the selected network so the wallet hook knows which chain was intended
+      sessionStorage.setItem('xox_pending_network', network.id);
+    } else {
+      // For TRX, show TronLink wallet option
+      setSelectedNetwork(network);
+      setStep('wallet');
+    }
   };
 
-  const handleEVMSelect = () => {
+  const handleWalletSelect = (walletId: string) => {
+    if (selectedNetwork) {
+      onSelectWallet(walletId, selectedNetwork);
+      setStep('network');
+      setSelectedNetwork(null);
+    }
+  };
+
+  const handleBack = () => {
+    setStep('network');
+    setSelectedNetwork(null);
+  };
+
+  const handleClose = () => {
+    setStep('network');
+    setSelectedNetwork(null);
     onClose();
-    onOpenAppKit();
   };
 
   return (
@@ -89,59 +120,92 @@ const WalletModal: React.FC<WalletModalProps> = ({
       <div className="relative w-full max-w-sm bg-[#111111] border border-white/10 rounded-xl p-6 shadow-2xl">
         {/* Close Button */}
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute top-4 right-4 w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[#929292] hover:text-white hover:border-white/20 transition-all"
         >
           <X size={16} />
         </button>
 
-        <div className="text-center mb-6">
-          <h3 className="text-xl font-bold text-white mb-2">Connect Wallet</h3>
-          <p className="text-[#929292] text-sm">Choose your preferred connection method</p>
-        </div>
+        {/* Step 1: Network Selection */}
+        {step === 'network' && (
+          <>
+            <div className="text-center mb-6">
+              <h3 className="text-xl font-bold text-white mb-2">Connect Wallet</h3>
+              <p className="text-[#929292] text-sm">Choose your preferred network</p>
+            </div>
 
-        <div className="space-y-3">
-          {/* EVM Networks - Opens AppKit */}
-          <button
-            onClick={handleEVMSelect}
-            className="w-full flex items-center gap-4 p-4 rounded-xl bg-[#030303] border border-white/5 hover:border-[#0b71ff]/30 hover:bg-[#0b71ff]/5 transition-all group"
-          >
-            <div className="flex -space-x-2">
-              <div className="w-10 h-10 rounded-full bg-[#627EEA]/20 flex items-center justify-center border-2 border-[#111111]">
-                <EthIcon />
+            <div className="space-y-3">
+              {NETWORK_LIST.map((network) => (
+                <button
+                  key={network.id}
+                  onClick={() => handleNetworkSelect(network)}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl bg-[#030303] border border-white/5 hover:border-[#0b71ff]/30 hover:bg-[#0b71ff]/5 transition-all group"
+                >
+                  <div className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden" style={{ backgroundColor: `${network.color}20` }}>
+                    <NetworkIcon networkId={network.id} />
+                  </div>
+                  <div className="text-left flex-1">
+                    <p className="text-sm font-semibold text-white group-hover:text-[#0b71ff] transition-colors">
+                      {network.name}
+                    </p>
+                    <p className="text-xs text-[#929292]">
+                      {network.walletType === 'evm' ? 'Connect via 300+ wallets' : 'Connect via TronLink'}
+                    </p>
+                  </div>
+                  <ChevronRight size={18} className="text-[#929292] group-hover:text-[#0b71ff]" />
+                </button>
+              ))}
+            </div>
+
+            <p className="text-center text-xs text-[#929292] mt-6">
+              All payments are made in USDT stablecoin
+            </p>
+          </>
+        )}
+
+        {/* Step 2: Wallet Selection (TRX only) */}
+        {step === 'wallet' && selectedNetwork && (
+          <>
+            {/* Back Button */}
+            <button
+              onClick={handleBack}
+              className="absolute top-4 left-4 w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[#929292] hover:text-white hover:border-white/20 transition-all"
+            >
+              <ChevronLeft size={16} />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="flex items-center justify-center gap-2 mb-2">
+                <div className="w-6 h-6 rounded-md flex items-center justify-center overflow-hidden" style={{ backgroundColor: `${selectedNetwork.color}20` }}>
+                  <NetworkIcon networkId={selectedNetwork.id} className="w-5 h-5" />
+                </div>
+                <h3 className="text-xl font-bold text-white">Connect Wallet</h3>
               </div>
-              <div className="w-10 h-10 rounded-full bg-[#F3BA2F]/20 flex items-center justify-center border-2 border-[#111111]">
-                <BnbIcon />
-              </div>
+              <p className="text-[#929292] text-sm">Select a wallet for {selectedNetwork.name}</p>
             </div>
-            <div className="text-left flex-1">
-              <p className="text-sm font-semibold text-white group-hover:text-[#0b71ff] transition-colors">
-                Ethereum / BNB Chain
-              </p>
-              <p className="text-xs text-[#929292]">MetaMask, WalletConnect, Google, Email</p>
-            </div>
-          </button>
 
-          {/* TRON Network - Direct TronLink */}
-          <button
-            onClick={handleTronSelect}
-            className="w-full flex items-center gap-4 p-4 rounded-xl bg-[#030303] border border-white/5 hover:border-[#FF0013]/30 hover:bg-[#FF0013]/5 transition-all group"
-          >
-            <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden p-1">
-              <TronLinkIcon />
+            <div className="space-y-3">
+              <button
+                onClick={() => handleWalletSelect('tronlink')}
+                className="w-full flex items-center gap-4 p-4 rounded-xl bg-[#030303] border border-white/5 hover:border-[#0b71ff]/30 hover:bg-[#0b71ff]/5 transition-all group"
+              >
+                <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden p-1">
+                  <TronLinkIcon />
+                </div>
+                <div className="text-left">
+                  <p className="text-sm font-semibold text-white group-hover:text-[#0b71ff] transition-colors">
+                    TronLink
+                  </p>
+                  <p className="text-xs text-[#929292]">Connect using TronLink</p>
+                </div>
+              </button>
             </div>
-            <div className="text-left flex-1">
-              <p className="text-sm font-semibold text-white group-hover:text-[#FF0013] transition-colors">
-                TRON Network
-              </p>
-              <p className="text-xs text-[#929292]">Connect using TronLink</p>
-            </div>
-          </button>
-        </div>
 
-        <p className="text-center text-xs text-[#929292] mt-6">
-          All payments are made in USDT stablecoin
-        </p>
+            <p className="text-center text-xs text-[#929292] mt-6">
+              Make sure TronLink extension is installed
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

@@ -9,7 +9,7 @@ import WalletModal from './components/WalletModal';
 import AdminAuthGate from './components/AdminAuthGate';
 import { PACKAGES } from './constants';
 import { Package, AppState, SubscriptionRecord, VipLevel } from './types';
-import { useUnifiedWallet } from './hooks/useUnifiedWallet';
+import { useMultiChainWallet } from './hooks/useMultiChainWallet';
 import { useSecureRecords } from './hooks/useSecureRecords';
 import { sanitizeInput, validateAddress } from './utils/security';
 import { NetworkConfig, getTxExplorerUrl } from './config/networks';
@@ -46,8 +46,8 @@ const App: React.FC = () => {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [pendingNavigation, setPendingNavigation] = useState<AppState | null>(null);
 
-  // Use unified wallet hook (AppKit + TronLink)
-  const wallet = useUnifiedWallet();
+  // Use multi-chain wallet hook (Reown AppKit + TronLink)
+  const wallet = useMultiChainWallet();
 
   // Use secure records hook
   const { records, saveRecord, error: recordsError, integrityValid } = useSecureRecords();
@@ -491,8 +491,7 @@ const App: React.FC = () => {
       <WalletModal
         isOpen={showWalletModal}
         onClose={() => setShowWalletModal(false)}
-        onConnectTron={wallet.connectTron}
-        onOpenAppKit={wallet.openModal}
+        onSelectWallet={wallet.connectWallet}
       />
     </div>
   );
